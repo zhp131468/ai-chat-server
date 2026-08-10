@@ -18,11 +18,11 @@ const IMAGE_API_URL =
   process.env.DASHSCOPE_BASE_URL ||
   'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation'
 
-function getApiKey() {
+function getApiKey () {
   return process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY || ''
 }
 
-function redactKey(key) {
+function redactKey (key) {
   if (!key) return '(missing)'
   if (key.startsWith('sk-sp-')) return 'sk-sp-***'
   if (key.startsWith('sk-ws-')) return 'sk-ws-***'
@@ -30,7 +30,7 @@ function redactKey(key) {
   return 'unknown-format'
 }
 
-function sendSse(res, data) {
+function sendSse (res, data) {
   const text = String(data)
   const payload = text
     .split(/\r?\n/)
@@ -40,7 +40,7 @@ function sendSse(res, data) {
   res.write(`${payload}\n\n`)
 }
 
-function parseSseFrames(raw, onPayload) {
+function parseSseFrames (raw, onPayload) {
   let buffer = raw
   let separatorIndex = buffer.indexOf('\n\n')
 
@@ -65,7 +65,7 @@ function parseSseFrames(raw, onPayload) {
   return buffer
 }
 
-function extractTextContent(message) {
+function extractTextContent (message) {
   if (!message) return ''
 
   const { content } = message
@@ -85,7 +85,7 @@ function extractTextContent(message) {
   return ''
 }
 
-function buildChatContent(prompt, image) {
+function buildChatContent (prompt, image) {
   const text = prompt ? String(prompt).trim() : ''
 
   if (!image) {
@@ -104,7 +104,7 @@ function buildChatContent(prompt, image) {
   ]
 }
 
-function buildImageContent(prompt, image) {
+function buildImageContent (prompt, image) {
   const text = prompt ? String(prompt).trim() : ''
   return [
     {
@@ -116,7 +116,7 @@ function buildImageContent(prompt, image) {
   ]
 }
 
-function extractImageUrls(content) {
+function extractImageUrls (content) {
   if (Array.isArray(content)) {
     return content
       .map((item) => item?.image || item?.image_url || item?.imageUrl)
@@ -250,22 +250,34 @@ app.all('/api/stream-chat', async (req, res) => {
 })
 
 app.post('/api/image-edit', async (req, res) => {
+  const startTime = Date.now()
+
   const { prompt, image } = req.body || {}
 
   if (!image) {
-    return res.status(400).json({ message: 'missing image' })
+    return res.status(400).json({
+      message: 'missing image'
+    })
   }
+
 
   const apiKey = getApiKey()
+
   if (!apiKey) {
-    return res.status(400).json({ message: 'backend missing QWEN_API_KEY or DASHSCOPE_API_KEY' })
+    return res.status(400).json({
+      message:
+        'backend missing QWEN_API_KEY or DASHSCOPE_API_KEY'
+    })
   }
 
+
   try {
+
     const result = await axios.post(
       IMAGE_API_URL,
       {
         model: IMAGE_MODEL,
+
         input: {
           messages: [
             {
@@ -274,6 +286,7 @@ app.post('/api/image-edit', async (req, res) => {
             }
           ]
         },
+
         parameters: {
           n: 1,
           negative_prompt: '',
@@ -288,40 +301,98 @@ app.post('/api/image-edit', async (req, res) => {
           'Content-Type': 'application/json',
           Accept: 'application/json'
         },
+
         timeout: 120000
       }
     )
 
-    const content = result.data?.output?.choices?.[0]?.message?.content
+
+    const content =
+      result.data?.output?.choices?.[0]?.message?.content
+
+
     const images = extractImageUrls(content)
 
+
     if (!images.length) {
-      console.error('Image API unexpected response:', result.data)
+
+      console.error(
+        'Image API unexpected response:',
+        result.data
+      )
+
+
       return res.status(500).json({
+
         message: 'image api returned no image',
+
         raw: result.data
+
       })
     }
 
+
+
+    // ===== 新增耗时计算 =====
+
+    const duration =
+      ((Date.now() - startTime) / 1000)
+        .toFixed(1)
+
+
+
     res.json({
-      text: result.data?.output?.message || '图片已生成',
+
+      success: true,
+
+      text:
+        result.data?.output?.message ||
+        '图片已生成',
+
+
       images,
-      raw: result.data
+
+
+      // 新增字段
+      duration: `${duration}s`,
+
+
+      // 方便调试
+      timestamp: Date.now()
+
     })
+
+
   } catch (err) {
-    console.error('Image edit error:', err.response?.data || err.message)
-    const errMsg = err.response?.data?.message || err.message
-    res.status(500).json({ message: errMsg })
+
+
+    console.error(
+      'Image edit error:',
+      err.response?.data ||
+      err.message
+    )
+
+
+    const errMsg =
+      err.response?.data?.message ||
+      err.message
+
+
+    res.status(500).json({
+
+      success: false,
+
+      message: errMsg
+
+    })
+
   }
 })
-
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Qwen stream server started on port ${PORT}`)
   console.log(`Chat model: ${CHAT_MODEL}`)
   console.log(`Image model: ${IMAGE_MODEL}`)
   console.log(`Image API: ${IMAGE_API_URL}`)
-  console.log(
-  "QWEN KEY:",
-  process.env.QWEN_API_KEY ? "存在" : "不存在"
-)
+  console.log("QWEN KEY:", process.env.QWEN_API_KEY ? "存在" : "不存在")
+  console.log('开始生成图片:', new Date().toISOString())
 })
