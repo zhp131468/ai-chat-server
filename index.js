@@ -129,7 +129,7 @@ function extractImageUrls(content) {
 }
 
 app.use(cors())
-app.use(express.json({ limit: '20mb' }))
+app.use(express.json({ limit: '50mb' }))
 
 app.get('/', (req, res) => {
   res.json({
@@ -320,4 +320,8 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Chat model: ${CHAT_MODEL}`)
   console.log(`Image model: ${IMAGE_MODEL}`)
   console.log(`Image API: ${IMAGE_API_URL}`)
+  console.log(
+  "QWEN KEY:",
+  process.env.QWEN_API_KEY ? "存在" : "不存在"
+)
 })
