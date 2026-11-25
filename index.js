@@ -1,95 +1,93 @@
-require('dotenv').config()
-const express = require('express')
-const cors = require('cors')
-const axios = require('axios')
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const axios = require('axios');
 
-const app = express()
-const PORT = process.env.PORT || 3000
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-const CHAT_MODEL = process.env.QWEN_MODEL || 'qwen3.7-plus'
+const CHAT_MODEL = process.env.QWEN_MODEL || 'qwen4-max';
 const CHAT_API_URL =
   process.env.QWEN_API_URL ||
   process.env.DASHSCOPE_BASE_URL ||
-  'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation'
+  'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
 
-const IMAGE_MODEL = process.env.QWEN_IMAGE_MODEL || 'qwen-image-2.0'
+const IMAGE_MODEL = process.env.QWEN_IMAGE_MODEL || 'qwen-image-2.1-turbo';
 const IMAGE_API_URL =
   process.env.WAN_IMAGE_API_URL ||
   process.env.DASHSCOPE_BASE_URL ||
-  'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation'
+  'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
 
 function getApiKey () {
-  return process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY || ''
+  return process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY || '';
 }
 
 function redactKey (key) {
-  if (!key) return '(missing)'
-  if (key.startsWith('sk-sp-')) return 'sk-sp-***'
-  if (key.startsWith('sk-ws-')) return 'sk-ws-***'
-  if (key.startsWith('sk-')) return 'sk-***'
-  return 'unknown-format'
+  if (!key) return '(missing)';
+  if (key.startsWith('sk-sp-')) return 'sk-sp-***';
+  if (key.startsWith('sk-ws-')) return 'sk-ws-***';
+  if (key.startsWith('sk-')) return 'sk-***';
+  return 'unknown-format';
 }
 
 function sendSse (res, data) {
-  const text = String(data)
+  const text = String(data);
   const payload = text
     .split(/\r?\n/)
     .map((line) => `data: ${line}`)
-    .join('\n')
+    .join('\n');
 
-  res.write(`${payload}\n\n`)
+  res.write(`${payload}\n\n`);
 }
 
 function parseSseFrames (raw, onPayload) {
-  let buffer = raw
-  let separatorIndex = buffer.indexOf('\n\n')
+  let buffer = raw;
+  let separatorIndex = buffer.indexOf('\n\n');
 
   while (separatorIndex !== -1) {
-    const frame = buffer.slice(0, separatorIndex)
-    buffer = buffer.slice(separatorIndex + 2)
+    const frame = buffer.slice(0, separatorIndex);
+    buffer = buffer.slice(separatorIndex + 2);
 
-    const dataLines = frame
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith('data:'))
+    const dataLines = frame.split(/\r?\n/).filter((line) => line.startsWith('data:'));
 
     for (const line of dataLines) {
-      const payload = line.replace(/^data:\s*/, '').trim()
+      const payload = line.replace(/^data:\s*/, '').trim();
       if (payload) {
-        onPayload(payload)
+        onPayload(payload);
       }
     }
 
-    separatorIndex = buffer.indexOf('\n\n')
+    separatorIndex = buffer.indexOf('\n\n');
   }
 
-  return buffer
+  return buffer;
 }
 
 function extractTextContent (message) {
-  if (!message) return ''
+  if (!message) return '';
 
-  const { content } = message
+  const { content } = message;
 
   if (typeof content === 'string') {
-    return content
+    return content;
   }
 
   if (Array.isArray(content)) {
-    return content.map((item) => item?.text || item?.content || '').join('')
+    return content.map((item) => item?.text || item?.content || '').join('');
   }
 
   if (content && typeof content === 'object' && typeof content.text === 'string') {
-    return content.text
+    return content.text;
   }
 
-  return ''
+  return '';
 }
 
 function buildChatContent (prompt, image) {
-  const text = prompt ? String(prompt).trim() : ''
+  const text = prompt ? String(prompt).trim() : '';
 
   if (!image) {
-    return text
+    return text;
   }
 
   return [
@@ -101,11 +99,11 @@ function buildChatContent (prompt, image) {
     {
       text: text || '请描述这张图片。'
     }
-  ]
+  ];
 }
 
 function buildImageContent (prompt, image) {
-  const text = prompt ? String(prompt).trim() : ''
+  const text = prompt ? String(prompt).trim() : '';
   return [
     {
       image: image
@@ -113,53 +111,99 @@ function buildImageContent (prompt, image) {
     {
       text: text || '请基于输入图片进行合理修改，并尽量保留原图主体。'
     }
-  ]
+  ];
 }
 
 function extractImageUrls (content) {
   if (Array.isArray(content)) {
-    return content
-      .map((item) => item?.image || item?.image_url || item?.imageUrl)
-      .filter(Boolean)
+    return content.map((item) => item?.image || item?.image_url || item?.imageUrl).filter(Boolean);
   }
   if (typeof content === 'string' && content) {
-    return [content]
+    return [content];
   }
-  return []
+  return [];
 }
+/**
+ * 处理聊天历史消息
+ *
+ * 前端传入的 messages 应包含：
+ * - 之前的 user 消息
+ * - 之前的 assistant 消息
+ * - 当前最新的 user 消息
+ */
+function buildMessages (messages, prompt, image) {
+  // 如果前端已经传入完整聊天记录，直接使用
+  if (Array.isArray(messages) && messages.length > 0) {
+    return messages
+      .filter(item => {
+        return (
+          ['user', 'assistant'].includes(item.role) &&
+          item.content !== undefined &&
+          item.content !== null
+        );
+      })
+      .map(item => ({
+        role: item.role,
+        content: item.content
+      }));
+  }
 
-app.use(cors())
-app.use(express.json({ limit: '50mb' }))
+  // 兼容旧版调用方式
+  return [
+    {
+      role: 'user',
+      content: buildChatContent(prompt, image)
+    }
+  ];
+}
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
 
 app.get('/', (req, res) => {
   res.json({
     name: 'AI Chat Server',
     status: 'ok',
     service: 'Qwen AI API'
-  })
-})
+  });
+});
 app.all('/api/stream-chat', async (req, res) => {
-  const prompt = req.method === 'GET' ? req.query.prompt : req.body?.prompt
-  const image = req.method === 'GET' ? req.query.image : req.body?.image
+  const prompt = req.method === 'GET' ? req.query.prompt : req.body?.prompt;
+  const image = req.method === 'GET' ? req.query.image : req.body?.image;
+  const messages = req.method === 'GET' ? null : req.body?.messages;
 
-  if (!prompt && !image) {
-    return res.status(400).send('missing prompt or image')
+  // 判断是否有有效的历史消息
+  const hasMessages =
+    Array.isArray(messages) &&
+    messages.some(item =>
+      ['user', 'assistant'].includes(item.role) &&
+      item.content !== undefined &&
+      item.content !== null &&
+      (
+        typeof item.content === 'string'
+          ? item.content.trim().length > 0
+          : true
+      )
+    );
+
+  // 兼容旧版 prompt/image 请求，同时支持新版 messages 请求
+  if (!prompt && !image && !hasMessages) {
+    return res.status(400).send('missing prompt, image or messages');
   }
 
-  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
-  res.setHeader('Cache-Control', 'no-cache, no-transform')
-  res.setHeader('Connection', 'keep-alive')
-  res.setHeader('X-Accel-Buffering', 'no')
-  res.flushHeaders()
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
 
-  const apiKey = getApiKey()
+  const apiKey = getApiKey();
   if (!apiKey) {
-    sendSse(res, 'backend missing QWEN_API_KEY or DASHSCOPE_API_KEY')
-    sendSse(res, '[DONE]')
-    return res.end()
+    sendSse(res, 'backend missing QWEN_API_KEY or DASHSCOPE_API_KEY');
+    sendSse(res, '[DONE]');
+    return res.end();
   }
 
-  const controller = new AbortController()
+  const controller = new AbortController();
 
   try {
     const result = await axios.post(
@@ -168,12 +212,14 @@ app.all('/api/stream-chat', async (req, res) => {
         model: CHAT_MODEL,
         stream: true,
         input: {
-          messages: [
-            {
-              role: 'user',
-              content: buildChatContent(prompt, image)
-            }
-          ]
+          messages: Array.isArray(messages) && messages.length
+            ? messages
+            : [
+              {
+                role: 'user',
+                content: buildChatContent(prompt, image)
+              }
+            ]
         },
         parameters: {
           result_format: 'message',
@@ -191,88 +237,88 @@ app.all('/api/stream-chat', async (req, res) => {
         timeout: 60000,
         signal: controller.signal
       }
-    )
+    );
 
-    let buffer = ''
+    let buffer = '';
 
     result.data.on('data', (chunkBuffer) => {
-      buffer += chunkBuffer.toString('utf8')
+      buffer += chunkBuffer.toString('utf8');
 
       buffer = parseSseFrames(buffer, (payload) => {
         if (payload === '[DONE]') {
-          sendSse(res, '[DONE]')
-          controller.abort()
-          res.end()
-          return
+          sendSse(res, '[DONE]');
+          controller.abort();
+          res.end();
+          return;
         }
 
         try {
-          const jsonObj = JSON.parse(payload)
-          const message = jsonObj.output?.choices?.[0]?.message
-          const text = extractTextContent(message)
+          const jsonObj = JSON.parse(payload);
+          const message = jsonObj.output?.choices?.[0]?.message;
+          const text = extractTextContent(message);
           if (text) {
-            sendSse(res, text)
+            sendSse(res, text);
           }
         } catch (err) {
-          sendSse(res, payload)
+          sendSse(res, payload);
         }
-      })
-    })
+      });
+    });
 
     result.data.on('end', () => {
       if (!res.writableEnded) {
-        sendSse(res, '[DONE]')
-        res.end()
+        sendSse(res, '[DONE]');
+        res.end();
       }
-    })
+    });
 
     result.data.on('error', (streamErr) => {
       if (!res.writableEnded) {
-        sendSse(res, `stream error: ${streamErr.message}`)
-        sendSse(res, '[DONE]')
-        res.end()
+        sendSse(res, `stream error: ${streamErr.message}`);
+        sendSse(res, '[DONE]');
+        res.end();
       }
-    })
+    });
 
     req.on('close', () => {
-      controller.abort()
+      // controller.abort();
+      // if (!res.writableEnded) {
+      //   res.end();
+      // }
+      // 只有客户端提前断开连接时，才取消上游请求
       if (!res.writableEnded) {
-        res.end()
+        controller.abort();
       }
-    })
+    });
   } catch (err) {
-    console.error('Chat API error:', err.response?.data || err.message)
-    const errMsg = err.response?.data?.message || err.message
-    sendSse(res, `call failed: ${errMsg}`)
-    sendSse(res, '[DONE]')
-    res.end()
+    console.error('Chat API error:', err.response?.data || err.message);
+    const errMsg = err.response?.data?.message || err.message;
+    sendSse(res, `call failed: ${errMsg}`);
+    sendSse(res, '[DONE]');
+    res.end();
   }
-})
+});
 
 app.post('/api/image-edit', async (req, res) => {
-  const startTime = Date.now()
+  const startTime = Date.now();
 
-  const { prompt, image } = req.body || {}
+  const { prompt, image } = req.body || {};
 
   if (!image) {
     return res.status(400).json({
       message: 'missing image'
-    })
+    });
   }
 
-
-  const apiKey = getApiKey()
+  const apiKey = getApiKey();
 
   if (!apiKey) {
     return res.status(400).json({
-      message:
-        'backend missing QWEN_API_KEY or DASHSCOPE_API_KEY'
-    })
+      message: 'backend missing QWEN_API_KEY or DASHSCOPE_API_KEY'
+    });
   }
 
-
   try {
-
     const result = await axios.post(
       IMAGE_API_URL,
       {
@@ -304,95 +350,56 @@ app.post('/api/image-edit', async (req, res) => {
 
         timeout: 120000
       }
-    )
+    );
 
+    const content = result.data?.output?.choices?.[0]?.message?.content;
 
-    const content =
-      result.data?.output?.choices?.[0]?.message?.content
-
-
-    const images = extractImageUrls(content)
-
+    const images = extractImageUrls(content);
 
     if (!images.length) {
-
-      console.error(
-        'Image API unexpected response:',
-        result.data
-      )
-
+      console.error('Image API unexpected response:', result.data);
 
       return res.status(500).json({
-
         message: 'image api returned no image',
 
         raw: result.data
-
-      })
+      });
     }
-
-
 
     // ===== 新增耗时计算 =====
 
-    const duration =
-      ((Date.now() - startTime) / 1000)
-        .toFixed(1)
-
-
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
 
     res.json({
-
       success: true,
 
-      text:
-        result.data?.output?.message ||
-        '图片已生成',
-
+      text: result.data?.output?.message || '图片已生成',
 
       images,
-
 
       // 新增字段
       duration: `${duration}s`,
 
-
       // 方便调试
       timestamp: Date.now()
-
-    })
-
-
+    });
   } catch (err) {
+    console.error('Image edit error:', err.response?.data || err.message);
 
-
-    console.error(
-      'Image edit error:',
-      err.response?.data ||
-      err.message
-    )
-
-
-    const errMsg =
-      err.response?.data?.message ||
-      err.message
-
+    const errMsg = err.response?.data?.message || err.message;
 
     res.status(500).json({
-
       success: false,
 
       message: errMsg
-
-    })
-
+    });
   }
-})
+});
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Qwen stream server started on port ${PORT}`)
-  console.log(`Chat model: ${CHAT_MODEL}`)
-  console.log(`Image model: ${IMAGE_MODEL}`)
-  console.log(`Image API: ${IMAGE_API_URL}`)
-  console.log("QWEN KEY:", process.env.QWEN_API_KEY ? "存在" : "不存在")
-  console.log('开始生成图片:', new Date().toISOString())
-})
+  console.log(`Qwen stream server started on port ${PORT}`);
+  console.log(`Chat model: ${CHAT_MODEL}`);
+  console.log(`Image model: ${IMAGE_MODEL}`);
+  console.log(`Image API: ${IMAGE_API_URL}`);
+  console.log('QWEN KEY:', process.env.QWEN_API_KEY ? '存在' : '不存在');
+  console.log('开始生成图片:', new Date().toISOString());
+});
