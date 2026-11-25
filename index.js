@@ -297,6 +297,9 @@ app.all('/api/stream-chat', async (req, res) => {
     sendSse(res, '[DONE]');
     res.end();
   }
+  console.log('========== NEW VERSION TEST ==========');
+  console.log('收到的请求参数：', JSON.stringify(req.body));
+  console.log('messages 是否为数组：', Array.isArray(req.body?.messages));
 });
 
 app.post('/api/image-edit', async (req, res) => {
