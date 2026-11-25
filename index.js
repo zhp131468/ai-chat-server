@@ -405,4 +405,5 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Image API: ${IMAGE_API_URL}`);
   console.log('QWEN KEY:', process.env.QWEN_API_KEY ? '存在' : '不存在');
   console.log('开始生成图片:', new Date().toISOString());
+  console.log('========== NEW VERSION TEST ==========');
 });
